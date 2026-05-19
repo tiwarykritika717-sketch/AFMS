@@ -8,7 +8,7 @@ import { AppProvider, useAppContext } from './context/AppContext';
 import Login from './modules/auth/Login';
 import Dashboard from './modules/dashboard/Dashboard';
 import CompanySetup from './modules/company/CompanySetup';
-import AccountsReceivable from './modules/ar/AR.tsx';
+import AccountsReceivable from './modules/ar/AR';
 import AccountsPayable from './modules/ap/AP';
 import GeneralLedger from './modules/gl/GL';
 import CashBank from './modules/cashbank/CashBank';
