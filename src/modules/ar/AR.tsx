@@ -23,6 +23,8 @@ import { handleDownload } from '../../utils/helpers';
 import { useAppContext } from '../../context/AppContext';
 import InvoiceReceipt from '../../components/ui/InvoiceReceipt';
 import { Invoice } from '../../types';
+import { jsPDF } from 'jspdf';
+import html2canvas from 'html2canvas';
 
 export default function AccountsReceivable() {
   const { currentCompany, contacts, invoices, addInvoice, updateInvoice, deleteInvoice, inventory } = useAppContext();
@@ -32,6 +34,7 @@ export default function AccountsReceivable() {
   const [items, setItems] = useState([{ productId: '', qty: 1, rate: 0, hsn: '' }]);
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
   const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().split('T')[0]);
+  const [customBillNumber, setCustomBillNumber] = useState('');
   const [taxType, setTaxType] = useState<'Inclusive' | 'Exclusive'>('Exclusive');
   const [extraFields, setExtraFields] = useState({
     saleOrderNo: '',
@@ -41,6 +44,84 @@ export default function AccountsReceivable() {
     dispatchDocNo: '',
     dispatchedThrough: ''
   });
+
+  const [isExporting, setIsExporting] = useState(false);
+
+  const isBeforeAprilFirst = (dateStr: string) => {
+    if (!dateStr) return false;
+    const d = new Date(dateStr);
+    const month = d.getMonth(); // 0-indexed: Jan=0, Feb=1, Mar=2
+    return month < 3; 
+  };
+
+  const generateInvoiceNumber = (dateStr: string) => {
+    const d = new Date(dateStr);
+    const year = d.getFullYear();
+    const month = d.getMonth(); // 0-indexed
+    
+    // Financial Year (April to March)
+    let fy = '';
+    if (month >= 3) { // April onwards
+      fy = `${year}-${(year + 1).toString().slice(-2)}`;
+    } else {
+      fy = `${year - 1}-${year.toString().slice(-2)}`;
+    }
+
+    // Filter invoices in the current financial year to find the max sequence
+    // ONLY count April onwards invoices (since from 1st April it resets / starts)
+    const fyInvoices = invoices.filter(inv => {
+      if (!(inv.invoiceNumber || '').endsWith(`/${fy}`)) return false;
+      const invDate = new Date(inv.date);
+      return invDate.getMonth() >= 3;
+    });
+    
+    let nextCount = 1;
+    if (fyInvoices.length > 0) {
+      const counts = fyInvoices.map(inv => {
+        const parts = inv.invoiceNumber.split('/');
+        if (parts.length >= 3 && parts[0] === 'SI') {
+          return parseInt(parts[1], 10);
+        }
+        return 0;
+      }).filter(n => !isNaN(n) && n > 0);
+      
+      if (counts.length > 0) {
+        nextCount = Math.max(...counts) + 1;
+      }
+    }
+
+    return `SI/${nextCount.toString().padStart(10, '0')}/${fy}`;
+  };
+
+  const handleExportPDF = async (inv: Invoice) => {
+    const element = document.getElementById('invoice-print-area');
+    if (!element) return;
+    setIsExporting(true);
+    try {
+      // Create high-resolution canvas for crystal clear client-side PDF export
+      const canvas = await html2canvas(element, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        backgroundColor: '#ffffff'
+      });
+      const imgData = canvas.toDataURL('image/png');
+      
+      // Calculate responsive dimensions to prevent pagination cut-offs
+      const pdf = new jsPDF({
+        orientation: 'portrait',
+        unit: 'px',
+        format: [canvas.width, canvas.height]
+      });
+      
+      pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
+      pdf.save(`Invoice_${inv.invoiceNumber || 'Receipt'}.pdf`);
+    } catch (error) {
+      console.error("PDF download failed:", error);
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
   const customers = contacts.filter(c => c.category === 'Customer');
 
@@ -99,6 +180,7 @@ export default function AccountsReceivable() {
   const handleEdit = (inv: Invoice) => {
     setSelectedCustomerId(inv.customerId || '');
     setInvoiceDate(inv.date);
+    setCustomBillNumber(inv.invoiceNumber || '');
     setItems(inv.items?.length > 0 ? inv.items : [{ productId: '', qty: 1, rate: 0, hsn: '' }]);
     setTaxType(inv.taxType || 'Exclusive');
     setExtraFields({
@@ -136,43 +218,17 @@ export default function AccountsReceivable() {
   const subTotal = items.reduce((acc, curr) => acc + (curr.qty * curr.rate), 0);
   const totalAmount = taxType === 'Exclusive' ? subTotal * 1.18 : subTotal;
 
-  const generateInvoiceNumber = () => {
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = now.getMonth(); // 0-indexed
-    
-    // Financial Year (April to March)
-    let fy = '';
-    if (month >= 3) { // April onwards
-      fy = `${year}-${(year + 1).toString().slice(-2)}`;
-    } else {
-      fy = `${year - 1}-${year.toString().slice(-2)}`;
-    }
-
-    // Filter invoices in the current financial year to find the max sequence
-    const fyInvoices = invoices.filter(inv => (inv.invoiceNumber || '').endsWith(`/${fy}`));
-    
-    let nextCount = 1;
-    if (fyInvoices.length > 0) {
-      const counts = fyInvoices.map(inv => {
-        const parts = inv.invoiceNumber.split('/');
-        return parts.length >= 2 ? parseInt(parts[1], 10) : 0;
-      }).filter(n => !isNaN(n));
-      
-      if (counts.length > 0) {
-        nextCount = Math.max(...counts) + 1;
-      }
-    }
-
-    return `SI/${nextCount.toString().padStart(10, '0')}/${fy}`;
-  };
-
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const customerObj = contacts.find(c => c.id === selectedCustomerId);
     
+    const invNum = isBeforeAprilFirst(invoiceDate)
+      ? customBillNumber
+      : generateInvoiceNumber(invoiceDate);
+
     if (editingId) {
       updateInvoice(editingId, {
+        invoiceNumber: invNum,
         customerName: customerObj?.name || 'Walk-in Customer',
         customerId: selectedCustomerId,
         customerGstin: customerObj?.gstin,
@@ -188,7 +244,7 @@ export default function AccountsReceivable() {
     } else {
       const newInv: Invoice = {
         id: `INV-${Date.now()}`,
-        invoiceNumber: generateInvoiceNumber(),
+        invoiceNumber: invNum,
         customerName: customerObj?.name || 'Walk-in Customer',
         customerId: selectedCustomerId,
         customerGstin: customerObj?.gstin,
@@ -208,6 +264,7 @@ export default function AccountsReceivable() {
     
     setIsCreating(false);
     setEditingId(null);
+    setCustomBillNumber('');
     setItems([{ productId: '', qty: 1, rate: 0, hsn: '' }]);
     setSelectedCustomerId('');
     setTaxType('Exclusive');
@@ -224,6 +281,7 @@ export default function AccountsReceivable() {
   const handleModalClose = () => {
     setIsCreating(false);
     setEditingId(null);
+    setCustomBillNumber('');
     setItems([{ productId: '', qty: 1, rate: 0, hsn: '' }]);
     setSelectedCustomerId('');
     setTaxType('Exclusive');
@@ -277,10 +335,20 @@ export default function AccountsReceivable() {
                     <MessageSquare className="w-4 h-4" /> WhatsApp
                    </button>
                    <button 
-                    onClick={() => window.print()}
-                    className="px-4 py-2.5 bg-brand-blue text-white rounded-xl text-xs font-bold hover:scale-105 transition-transform flex items-center gap-2"
+                    onClick={() => handleExportPDF(selectedInvoice)}
+                    disabled={isExporting}
+                    className="px-4 py-2.5 bg-brand-blue text-white rounded-xl text-xs font-bold hover:scale-105 transition-transform flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                    >
-                    <Download className="w-4 h-4" /> Export PDF
+                    {isExporting ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                        Generating...
+                      </>
+                    ) : (
+                      <>
+                        <Download className="w-4 h-4" /> Export PDF
+                      </>
+                    )}
                    </button>
                    <button 
                     onClick={() => setSelectedInvoice(null)} 
@@ -292,7 +360,7 @@ export default function AccountsReceivable() {
               </div>
               <div className="p-10 flex-1 overflow-y-auto bg-brand-grey-light/20 flex justify-center custom-scrollbar">
                 {currentCompany && (
-                   <div className="bg-white p-8 md:p-12 shadow-xl rounded-sm w-full max-w-[850px]">
+                   <div id="invoice-print-area" className="bg-white p-8 md:p-12 shadow-xl rounded-sm w-full max-w-[850px]">
                       <InvoiceReceipt 
                         invoice={mockInvoiceData(selectedInvoice)} 
                         company={currentCompany} 
@@ -329,7 +397,7 @@ export default function AccountsReceivable() {
               
               <div className="flex-1 overflow-y-auto p-10 custom-scrollbar">
                 <form onSubmit={handleSubmit} className="space-y-10">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
                     <div className="space-y-1.5">
                       <label className="text-[10px] font-black text-brand-grey-dark/40 uppercase tracking-widest ml-1">Customer Name</label>
                       <select 
@@ -354,6 +422,29 @@ export default function AccountsReceivable() {
                         className="w-full px-6 py-3.5 bg-brand-grey-light border border-brand-grey-dark/5 rounded-2xl text-sm font-bold text-brand-blue focus:outline-none focus:border-brand-teal transition-all"
                       />
                     </div>
+                    {isBeforeAprilFirst(invoiceDate) ? (
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-brand-grey-dark/40 uppercase tracking-widest ml-1">Bill Number (Manual)</label>
+                        <input 
+                          type="text"
+                          required
+                          placeholder="e.g. SI/999/2025-26"
+                          value={customBillNumber}
+                          onChange={(e) => setCustomBillNumber(e.target.value)}
+                          className="w-full px-6 py-3.5 bg-brand-grey-light border border-brand-teal/30 focus:border-brand-teal rounded-2xl text-sm font-bold text-brand-blue focus:outline-none shadow-sm transition-all"
+                        />
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-brand-grey-dark/40 uppercase tracking-widest ml-1">Bill Number (Auto-Generated)</label>
+                        <input 
+                          type="text"
+                          readOnly
+                          value={generateInvoiceNumber(invoiceDate)}
+                          className="w-full px-6 py-3.5 bg-brand-grey-light/50 border border-brand-grey-dark/5 rounded-2xl text-sm font-bold text-brand-teal focus:outline-none cursor-not-allowed select-none"
+                        />
+                      </div>
+                    )}
                   </div>
 
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

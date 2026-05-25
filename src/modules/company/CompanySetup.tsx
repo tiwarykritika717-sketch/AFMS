@@ -153,7 +153,7 @@ export default function CompanySetup() {
         <div className="lg:col-span-1 space-y-8">
             <div className="bg-white rounded-[2.5rem] p-8 card-shadow border border-brand-grey-dark/5 flex flex-col items-center text-center">
                 <div className="relative group mb-6">
-                    <div className="w-32 h-32 bg-brand-grey-light rounded-3xl overflow-hidden flex items-center justify-center border-2 border-brand-grey-dark/10 shadow-inner group-hover:border-brand-teal/30 transition-all">
+                    <div className="w-32 h-32 bg-brand-grey-light rounded-3xl overflow-hidden flex items-center justify-center border-2 border-brand-grey-dark/10 shadow-inner group-hover:border-brand-teal/30 transition-all relative">
                         {formData.logo ? (
                             <img src={formData.logo} alt="Logo" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                         ) : (
@@ -162,11 +162,10 @@ export default function CompanySetup() {
                                 <span className="text-[8px] font-black text-brand-grey-dark/30 uppercase">No Logo</span>
                             </div>
                         )}
-                    </div>
-                    {isEditing ? (
-                        <label className="absolute inset-0 bg-brand-blue/60 backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center rounded-3xl cursor-pointer border-2 border-dashed border-white/40">
-                            <Camera className="w-8 h-8 text-white mb-1" />
-                            <span className="text-[10px] font-black text-white uppercase tracking-tighter">Choose File</span>
+                        {/* Hover overlay always triggerable on desktop */}
+                        <label className="absolute inset-0 bg-brand-blue/60 backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center cursor-pointer">
+                            <Camera className="w-6 h-6 text-white mb-1" />
+                            <span className="text-[10px] font-black text-white uppercase tracking-tighter">Upload Logo</span>
                             <input 
                               type="file" 
                               className="hidden" 
@@ -176,21 +175,45 @@ export default function CompanySetup() {
                                 if (file) {
                                   const reader = new FileReader();
                                   reader.onloadend = () => {
-                                    setFormData({ ...formData, logo: reader.result as string });
+                                    const base64String = reader.result as string;
+                                    setFormData(prev => ({ ...prev, logo: base64String }));
+                                    if (!isEditing) {
+                                      updateCompany({ logo: base64String });
+                                      setSaveStatus('saved');
+                                      setTimeout(() => setSaveStatus('idle'), 3000);
+                                    }
                                   };
                                   reader.readAsDataURL(file);
                                 }
                               }}
                             />
                         </label>
-                    ) : (
-                        <button 
-                            onClick={() => setIsEditing(true)}
-                            className="absolute -bottom-2 -right-2 p-2 bg-brand-teal text-white rounded-xl shadow-lg hover:scale-110 transition-transform lg:hidden"
-                        >
-                            <Settings2 className="w-4 h-4" />
-                        </button>
-                    )}
+                    </div>
+                    {/* Always visible Camera Badge for mobile/touch and clear desktop visibility */}
+                    <label className="absolute -bottom-2 -right-2 p-2.5 bg-brand-teal text-white rounded-xl shadow-lg hover:scale-110 active:scale-95 transition-all cursor-pointer flex items-center justify-center border-2 border-white z-10">
+                        <Camera className="w-4 h-4" />
+                        <input 
+                          type="file" 
+                          className="hidden" 
+                          accept="image/*"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              const reader = new FileReader();
+                              reader.onloadend = () => {
+                                const base64String = reader.result as string;
+                                setFormData(prev => ({ ...prev, logo: base64String }));
+                                if (!isEditing) {
+                                  updateCompany({ logo: base64String });
+                                  setSaveStatus('saved');
+                                  setTimeout(() => setSaveStatus('idle'), 3000);
+                                }
+                              };
+                              reader.readAsDataURL(file);
+                            }
+                          }}
+                        />
+                    </label>
                 </div>
                 <h3 className="text-xl font-display font-bold text-brand-blue">{formData.name}</h3>
                 <p className="text-xs text-brand-teal font-black uppercase tracking-widest mt-1">Admin Controlled</p>
